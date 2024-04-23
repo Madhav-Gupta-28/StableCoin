@@ -46,6 +46,7 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine__MintFailed();
     error DSCEngine__HealthFactorOk();
     error DSCEngine__HealthFactorNotImproved();
+    error DSCEngine__BurnFailed();
 
 
     ////////////////////
@@ -168,8 +169,8 @@ contract DSCEngine is ReentrancyGuard {
         morethanZero(amountCollateral) morethanZero(dscAmountToBurn) isAllowedToken(tokenCollateralAddress) nonReentrant
         {
       
-        _burnDSC(dscAmountToBurn);
-        _redeemCollateral(tokenCollateralAddress,amountCollateral);
+        _burnDSC(dscAmountToBurn,msg.sender,msg.sender);
+        _redeemCollateral(tokenCollateralAddress,amountCollateral,msg.sender,msg.sender);
         _revertIfHealthFactorisBroken(msg.sender);
 
         }
@@ -185,7 +186,7 @@ contract DSCEngine is ReentrancyGuard {
         ) external morethanZero(amountofCollateraltoRedeem) isAllowedToken(tokenCollateralAddress) nonReentrant{
 
         _redeemCollateral(tokenCollateralAddress,amountofCollateraltoRedeem,msg.sender,msg.sender);
-        _revertIfHealthFactorisBroken(msg.sender)   
+        _revertIfHealthFactorisBroken(msg.sender)   ;
 
 
     }
@@ -219,26 +220,19 @@ contract DSCEngine is ReentrancyGuard {
     @param amountToBurn Amount of Stablecoin that user want to burn
     @dev User might want to burn DSC to redeem collateral as well as in the fear of liquidation. so he/she can keep their position
     */
-    function burnDsc(uint256 amountToBurn) external morethanZero(amountToBurns) {
+    function burnDsc(uint256 amountToBurn) external morethanZero(amountToBurn) {
         _burnDSC(amountToBurn,msg.sender,msg.sender);
         _revertIfHealthFactorisBroken(msg.sender);
     }
 
 
-    /**
-    @param tokenCollateralAddress Address of the token user is liquidating
-    @param user Address of the user who is being liquidated
+    /*
+    @param tokenCollateralAddress Address of the token user is redeeming
+    @param user Address of the user who is getting liquidated
     @param debtTocover Amount of debt user has to cover
-    @notice If someone is almost under collateralized. They can liquidate the user and get a bonus
-    @notice: You can partially liquidate a user.
-    @notice: You will get a 10% LIQUIDATION_BONUS for taking the users funds.
-    @notice: This function working assumes that the protocol will be roughly 150% overcollateralized in order for this
-    to work.
-    @notice: A known bug would be if the protocol was only 100% collateralized, we wouldn't be able to liquidate
-    anyone.
-     * For example, if the price of the collateral plummeted before anyone could be liquidated.
-     */
-    function liquidate(address tokenCollateralAddress  address user  , uint256 debtTocover) 
+
+    */
+    function liquidate(address tokenCollateralAddress , address user  , uint256 debtTocover) 
         public  nonReentrant isAllowedToken(tokenCollateralAddress) morethanZero(debtTocover) {
 
         uint256 startingUserhealthFactor = _healthFactor(user);
@@ -247,7 +241,7 @@ contract DSCEngine is ReentrancyGuard {
             revert DSCEngine__HealthFactorOk();
         }
 
-        uint256 tokenAmountFromdebtCovered = getTokenAmountFromUsd(collateralAddress,debtTocover);
+        uint256 tokenAmountFromdebtCovered = getTokenAmountFromUsd(tokenCollateralAddress,debtTocover);
 
         // Here We are calculating the 10% bonus we are going to give to the liquidator
         uint256 bonusCollateral  =( tokenAmountFromdebtCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
@@ -266,7 +260,11 @@ contract DSCEngine is ReentrancyGuard {
 
     }
 
-    function gethealthfactor() external view {}
+
+
+    function gethealthfactor(address user) external view returns(uint256) {
+        return _healthFactor(user);
+    }
 
 
 
@@ -351,18 +349,21 @@ contract DSCEngine is ReentrancyGuard {
 
         s_DSCMinted[onBehalfOf] -= amountToBurn;
 
-        bool burned = i_dsc.burn(dscFrom,address(this),amountToBurn);
+        bool success = i_dsc.transferFrom(dscFrom,address(this) ,  amountToBurn);
 
-        if(burned != true){
-            revert DSCEngine__BurnFailed();
+        if(!success){
+            revert DSCEngine__TransferFailed();
         }
+
+        i_dsc.burn(amountToBurn);
+
 
     }
 
 
     function getTokenAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
+        (, int256 price,,,) = priceFeed.latestRoundData();
         
         return ((usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }

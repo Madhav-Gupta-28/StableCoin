@@ -5,6 +5,7 @@ pragma solidity ^0.8.20;
 // import { OracleLib, AggregatorV3Interface } from "./libraries/OracleLib.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { OracleLib, AggregatorV3Interface } from "./libraries/OracleLib.sol";
 import { DecentralizedStablecoin } from "./DecentralizedStableCoin.sol";
 import {  AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
@@ -84,6 +85,12 @@ contract DSCEngine is ReentrancyGuard {
 
     /// @dev list of tokens used as collaterals
     address[] private s_collateralTokens;
+
+
+    ///////////////////
+    // Types
+    ///////////////////
+    using OracleLib for AggregatorV3Interface;
 
 
     //////////////////
@@ -276,7 +283,7 @@ contract DSCEngine is ReentrancyGuard {
     function getUsdValue(address token , uint256 amount) public  view returns(uint256){
         AggregatorV3Interface priceFeed =  AggregatorV3Interface(s_priceFeeds[token]);
 
-        (,int256 price,,, ) = priceFeed.latestRoundData();
+        (,int256 price,,, ) = priceFeed.staleCheckLatestRoundData();
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
     }   
 
@@ -310,12 +317,24 @@ contract DSCEngine is ReentrancyGuard {
 
         (uint256 totalDscMinted , uint256 collateralvalueinUSD) = _getAccountInformation(user);
 
-        uint256 collateralAdjustedForThreshold =  (collateralvalueinUSD * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-
-        return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
+        return _calculateHealthFactor(totalDscMinted, collateralvalueinUSD);
 
 
     } 
+
+
+    function _calculateHealthFactor(
+        uint256 totalDscMinted,
+        uint256 collateralValueInUsd
+        )
+            internal
+            pure
+            returns (uint256)
+        {
+            if (totalDscMinted == 0) return type(uint256).max;
+            uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+            return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
+    }
 
     function _revertIfHealthFactorisBroken(address user) internal view  {
 
@@ -363,7 +382,7 @@ contract DSCEngine is ReentrancyGuard {
 
     function getTokenAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
         
         return ((usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }
